@@ -1,0 +1,43 @@
+<%- include('partials/header') %>
+
+<div class="jumbotron text-center">
+  <div class="container">
+    <i class="fas fa-key fa-6x"></i>
+    <h1 class="display-3">Your URLs</h1>
+    <table>
+      <thead>
+        <tr>
+          <th>Original URL</th>
+          <th>Short URL</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% secret.forEach(item => { %>
+          <tr>
+            <td><%= item.original_url %></td>
+            <td><a href="http://localhost:3000/<%= item.short_key %>" target="_blank">
+              http://localhost:3000/<%= item.short_key %></a></td>
+            <td>
+              <form action="/delete" method="POST">
+                <input type="hidden" name="id" value="<%= item.short_key %>">
+                <button type="submit" class="btn btn-danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+    <hr>
+    <div class="btn_container">
+      <div>
+        <a class="btn btn-light btn-lg" href="/logout" role="button">Log Out</a>
+      </div>
+      <div>
+        <a class="btn btn-dark btn-lg" href="/submit" role="button">Add URL</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<%- include('partials/footer') %>

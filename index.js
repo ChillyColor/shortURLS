@@ -8,6 +8,8 @@ import GoogleStrategy from "passport-google-oauth2";
 import session from "express-session";
 import env from "dotenv";
 import shortid from "shortid";
+import pool from "./db/pool.js";
+
 
 const app = express();
 const port = 3000;
@@ -28,20 +30,10 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
-const db = new pg.Client({
-  user: process.env.PG_USER,
-  host: process.env.PG_HOST,
-  database: process.env.PG_DATABASE,
-  password: process.env.PG_PASSWORD,
-  port: process.env.PG_PORT,
-});
-
-db.connect();
-
 app.get("/dashboard", async (req, res) => {
   if (req.isAuthenticated()) {
     const id = req.user.id;
-    const secret = await db.query(
+    const secret = await pool.query(
       "SELECT short_key,original_url,user_id FROM urls WHERE user_id= $1",
       [id]
     );
@@ -88,7 +80,7 @@ app.get(
 
 app.post("/delete",async (req,res)=>{
   const del =req.body.id
-  await db.query("DELETE FROM urls WHERE short_key= $1",[del]);
+  await pool.query("DELETE FROM urls WHERE short_key= $1",[del]);
   res.redirect("/dashboard")
 })
 
@@ -97,7 +89,7 @@ app.post("/submit", async (req, res) => {
   const link = req.body.url;
   const id = req.user.id;
   let code;
-  const result = await db.query(
+  const result = await pool.query(
     "SELECT * FROM users INNER JOIN urls ON users.id = urls.user_id WHERE email=$1 AND original_url=$2",
     [email, link]
   );
@@ -105,7 +97,7 @@ app.post("/submit", async (req, res) => {
     code = result.rows[0].short_key;
   } else {
     code = shortid.generate();
-    await db.query(
+    await pool.query(
       "INSERT INTO urls (user_id,short_key,original_url) VALUES ($1,$2,$3)",
       [id, code, link]
     );
@@ -116,7 +108,7 @@ app.post("/register", async (req, res) => {
   try {
     const email = req.body.username;
     const password = req.body.password;
-    const result = await db.query("SELECT * FROM users WHERE email=$1", [
+    const result = await pool.query("SELECT * FROM users WHERE email=$1", [
       email,
     ]);
     if (result.rows.length > 0) {
@@ -126,7 +118,7 @@ app.post("/register", async (req, res) => {
         if (err) {
           console.error("Error hashing password", err);
         } else {
-          await db.query("INSERT INTO users (email,password) VALUES ($1,$2)", [
+          await pool.query("INSERT INTO users (email,password) VALUES ($1,$2)", [
             email,
             hash,
           ]);
@@ -158,7 +150,7 @@ app.get("/:code", async (req, res) => {
   if (!req.isAuthenticated()) return res.redirect("/login");
   const id = req.user.id;
   try {
-    const result = await db.query(
+    const result = await pool.query(
       "SELECT original_url FROM urls WHERE user_id=$1 AND short_key=$2",
       [id, code]
     );
@@ -175,7 +167,7 @@ passport.use(
   "local",
   new Strategy(async function verify(username, password, cb) {
     try {
-      const result = await db.query("SELECT * FROM users WHERE email = $1", [
+      const result = await pool.query("SELECT * FROM users WHERE email = $1", [
         username,
       ]);
       if (result.rows.length > 0) {
@@ -208,7 +200,7 @@ passport.serializeUser((user, cb) => {
 
 passport.deserializeUser(async (id, cb) => {
   try {
-    const result = await db.query("SELECT * FROM users WHERE id=$1", [id]);
+    const result = await pool.query("SELECT * FROM users WHERE id=$1", [id]);
     if (result.rows.length > 0) {
       cb(null, result.rows[0]); // Retrieve full user object when needed
     } else {
@@ -228,9 +220,9 @@ passport.use(
   },
   async(accessToken,refreshToken,profile,cb)=>{
     try{
-    const result=await db.query("SELECT * FROM users WHERE email = $1",[profile.email]);
+    const result=await pool.query("SELECT * FROM users WHERE email = $1",[profile.email]);
     if(result.rows.length===0){
-      const newUser=await db.query("INSERT INTO users (email, password) VALUES ($1, $2)",[profile.email,profile.id]);
+      const newUser=await pool.query("INSERT INTO users (email, password) VALUES ($1, $2)",[profile.email,profile.id]);
       return cb(null,newUser.rows[0]);
     }
     else{

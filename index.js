@@ -10,9 +10,7 @@ import env from "dotenv";
 import shortid from "shortid";
 import pool from "./db/pool.js";
 
-
 const app = express();
-const port = 3000;
 const saltRound = 10;
 env.config();
 
@@ -30,106 +28,62 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
+// Routes
 app.get("/dashboard", async (req, res) => {
-  if (req.isAuthenticated()) {
+  try {
+    if (!req.isAuthenticated()) return res.redirect("/login");
+
     const id = req.user.id;
     const secret = await pool.query(
-      "SELECT short_key,original_url,user_id FROM urls WHERE user_id= $1",
+      "SELECT short_key, original_url, user_id FROM urls WHERE user_id = $1",
       [id]
     );
+
     res.render("dashboard.ejs", { secret: secret.rows });
-  } else {
-    res.redirect("/login");
+  } catch (error) {
+    console.error("Error fetching dashboard:", error);
+    res.status(500).send("Internal Server Error - DB issue");
   }
 });
 
-app.get("/", (req, res) => {
-  res.render("home.ejs");
-});
+app.get("/", (req, res) => res.render("home.ejs"));
+app.get("/register", (req, res) => res.render("register.ejs"));
+app.get("/login", (req, res) => res.render("login.ejs"));
 
-app.get("/register", (req, res) => {
-  res.render("register.ejs");
-});
-
-app.get("/login", (req, res) => {
-  res.render("login.ejs");
-});
-
-app.get("/submit", (req, res) => {
-  if (req.isAuthenticated()) {
-    res.render("submit.ejs");
-  } else {
-    res.redirect("/login");
+app.post("/delete", async (req, res) => {
+  try {
+    const del = req.body.id;
+    await pool.query("DELETE FROM urls WHERE short_key = $1", [del]);
+    res.redirect("/dashboard");
+  } catch (error) {
+    console.error("Error deleting URL:", error);
+    res.status(500).send("Internal Server Error");
   }
 });
 
-app.get(
-  "/auth/google",
-  passport.authenticate("google", {
-    scope: ["profile", "email"],
-  })
-);
-
-app.get(
-  "/auth/google/dashboard",
-  passport.authenticate("google", {
-    successRedirect: "/dashboard",
-    failureRedirect: "/login",
-  })
-);
-
-app.post("/delete",async (req,res)=>{
-  const del =req.body.id
-  await pool.query("DELETE FROM urls WHERE short_key= $1",[del]);
-  res.redirect("/dashboard")
-})
-
-app.post("/submit", async (req, res) => {
-  const email = req.user.email;
-  const link = req.body.url;
-  const id = req.user.id;
-  let code;
-  const result = await pool.query(
-    "SELECT * FROM users INNER JOIN urls ON users.id = urls.user_id WHERE email=$1 AND original_url=$2",
-    [email, link]
-  );
-  if (result.rows.length > 0) {
-    code = result.rows[0].short_key;
-  } else {
-    code = shortid.generate();
-    await pool.query(
-      "INSERT INTO urls (user_id,short_key,original_url) VALUES ($1,$2,$3)",
-      [id, code, link]
-    );
-  }
-  res.redirect("/dashboard");
-});
 app.post("/register", async (req, res) => {
   try {
     const email = req.body.username;
     const password = req.body.password;
-    const result = await pool.query("SELECT * FROM users WHERE email=$1", [
-      email,
-    ]);
+
+    const result = await pool.query("SELECT * FROM users WHERE email=$1", [email]);
+
     if (result.rows.length > 0) {
-      res.send("You are already registered try logging in");
+      res.send("You are already registered. Try logging in.");
     } else {
-      bcrypt.hash(password, saltRound, async (err, hash) => {
-        if (err) {
-          console.error("Error hashing password", err);
-        } else {
-          await pool.query("INSERT INTO users (email,password) VALUES ($1,$2)", [
-            email,
-            hash,
-          ]);
-          res.redirect("/dashboard");
-        }
-      });
+      const hash = await bcrypt.hash(password, saltRound);
+      await pool.query(
+        "INSERT INTO users (email, password) VALUES ($1, $2)",
+        [email, hash]
+      );
+      res.redirect("/dashboard");
     }
-  } catch (err) {
-    console.log(err);
+  } catch (error) {
+    console.error("Error registering user:", error);
+    res.status(500).send("Internal Server Error");
   }
 });
+
 app.post(
   "/login",
   passport.authenticate("local", {
@@ -137,104 +91,22 @@ app.post(
     failureRedirect: "/login",
   })
 );
+
 app.get("/logout", (req, res) => {
-  req.logout(function (err) {
-    if (err) {
-      console.log(err);
-    }
-    res.redirect("/");
+  req.logout();
+  res.redirect("/");
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error("❌ Internal Server Error:", {
+    message: err.message,
+    stack: err.stack,
+    name: err.name,
   });
-});
-app.get("/:code", async (req, res) => {
-  const { code } = req.params;
-  if (!req.isAuthenticated()) return res.redirect("/login");
-  const id = req.user.id;
-  try {
-    const result = await pool.query(
-      "SELECT original_url FROM urls WHERE user_id=$1 AND short_key=$2",
-      [id, code]
-    );
-    if (result.rows.length > 0) {
-      res.redirect(result.rows[0].original_url);
-    } else {
-      res.status(404).send("Short URL Not Found");
-    }
-  } catch (err) {
-    console.log(err);
-  }
-});
-passport.use(
-  "local",
-  new Strategy(async function verify(username, password, cb) {
-    try {
-      const result = await pool.query("SELECT * FROM users WHERE email = $1", [
-        username,
-      ]);
-      if (result.rows.length > 0) {
-        const user = result.rows[0];
-        const hashPassword = user.password;
 
-        bcrypt.compare(password, hashPassword, (err, result) => {
-          if (err) {
-            return cb(err);
-          } else {
-            if (result) {
-              return cb(null, user);
-            } else {
-              return cb(null, false);
-            }
-          }
-        });
-      } else {
-        return cb(null, false);
-      }
-    } catch (err) {
-      console.log(err);
-    }
-  })
-);
-
-passport.serializeUser((user, cb) => {
-  cb(null, user.id); // Store only user ID in session
+  res.status(500).send(`Error: ${err.message}`);
 });
 
-passport.deserializeUser(async (id, cb) => {
-  try {
-    const result = await pool.query("SELECT * FROM users WHERE id=$1", [id]);
-    if (result.rows.length > 0) {
-      cb(null, result.rows[0]); // Retrieve full user object when needed
-    } else {
-      cb(null, false);
-    }
-  } catch (err) {
-    cb(err);
-  }
-});
-passport.use(
-  "google",
-  new GoogleStrategy({
-    clientID: process.env.GOOGLE_CLIENT_ID,
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: "http://localhost:3000/auth/google/dashboard",
-    userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo",
-  },
-  async(accessToken,refreshToken,profile,cb)=>{
-    try{
-    const result=await pool.query("SELECT * FROM users WHERE email = $1",[profile.email]);
-    if(result.rows.length===0){
-      const newUser=await pool.query("INSERT INTO users (email, password) VALUES ($1, $2)",[profile.email,profile.id]);
-      return cb(null,newUser.rows[0]);
-    }
-    else{
-      return cb(null,result.rows[0])
-    }
-    }catch(err){
-      return cb(err);
-    }
-  }
-)
-);
-
-app.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
-});
+// Export for Vercel
+export default app;
